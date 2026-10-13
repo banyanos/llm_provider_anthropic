@@ -1,0 +1,119 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": true,
+  "definitions": {
+    "paramSchema": {
+      "additionalProperties": true,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "items": {
+          "$ref": "#/definitions/paramSchema"
+        },
+        "properties": {
+          "additionalProperties": {
+            "$ref": "#/definitions/paramSchema"
+          },
+          "type": "object"
+        },
+        "required": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "string",
+            "number",
+            "integer",
+            "boolean",
+            "object",
+            "array"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "toolParameters": {
+      "additionalProperties": true,
+      "properties": {
+        "properties": {
+          "additionalProperties": {
+            "$ref": "#/definitions/paramSchema"
+          },
+          "type": "object"
+        },
+        "required": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "object"
+        }
+      },
+      "required": [
+        "type",
+        "properties",
+        "required"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "max_tokens": {
+      "description": "Hard cap on tokens in the model’s reply.",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "model": {
+      "type": "string"
+    },
+    "temperature": {
+      "default": 0.1,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "type": "number"
+    },
+    "tools": {
+      "description": "Optional tool declarations (functions, code-interpreter, built-in `web_search_preview`, etc.).",
+      "items": {
+        "additionalProperties": true,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "input_schema": {
+            "$ref": "#/definitions/toolParameters"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "top_p": {
+      "default": 1,
+      "maximum": 1,
+      "minimum": 0,
+      "type": "number"
+    }
+  },
+  "required": [
+    "model"
+  ],
+  "title": "Claude Configuration Schema",
+  "type": "object"
+}
