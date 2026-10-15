@@ -17,7 +17,11 @@ from typing import Any, Dict, List, Optional
 
 import anthropic
 import pendulum
-from llm_provider_base import LlmProviderHandler
+from llm_provider_base import (
+    LlmProviderHandler,
+    endpoint_base,
+    fetch_upstream_models,
+)
 from silvaengine_utility import Debugger, convert_decimal_to_number
 from silvaengine_utility.performance_monitor import performance_monitor
 from silvaengine_utility.serializer import Serializer
@@ -68,6 +72,18 @@ class AnthropicProvider(LlmProviderHandler):
         "list_models": True,
     }
     default_pool_name = "httpx_llm_anthropic"
+
+    @classmethod
+    def list_models(cls, ctx: Any) -> List[Dict[str, str]]:
+        """Anthropic model list: ``GET {endpoint}/v1/models``."""
+        key = str((getattr(ctx, "credentials", None) or {}).get("api_key") or "")
+        base = endpoint_base(ctx, "https://api.anthropic.com")
+        if base.endswith("/v1"):
+            base = base[: -len("/v1")]
+        return fetch_upstream_models(
+            ctx, f"{base}/v1/models",
+            headers={"x-api-key": key, "anthropic-version": "2023-06-01"} if key else {},
+        )
 
     def __init__(
         self,
@@ -1634,7 +1650,6 @@ class AnthropicProvider(LlmProviderHandler):
                     continue
 
                 reasoning_text = chunk.delta.thinking
-                print(reasoning_text, end="", flush=True)
 
                 # Accumulate reasoning text for current block and for display
                 current_reasoning_text_parts.append(reasoning_text)
@@ -1695,7 +1710,6 @@ class AnthropicProvider(LlmProviderHandler):
                 if not chunk.delta.text:
                     continue
 
-                print(chunk.delta.text, end="", flush=True)
                 if output_format in ["json_object", "json_schema"]:
                     accumulated_partial_json += chunk.delta.text
                     index, self.accumulated_text, accumulated_partial_json = (
