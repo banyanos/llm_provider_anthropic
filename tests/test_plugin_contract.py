@@ -263,6 +263,7 @@ def test_to_native_stale_state_dropped_message_kept():
 
 # --------------------------------------------- single-turn handle_response
 
+
 def test_handle_response_tool_branch_returns_calls_and_state():
     handler = _handler()
     response = _blocks_response(
@@ -316,9 +317,9 @@ def test_handle_response_end_turn_usage_and_signed_state():
 def test_handle_response_plain_answer_has_no_state():
     handler = _handler()
     response = _blocks_response(
-        "end_turn", [_text("just answer")], usage=SimpleNamespace(
-            input_tokens=1, output_tokens=1
-        )
+        "end_turn",
+        [_text("just answer")],
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
     )
     handler.handle_response(response, [])
     assert handler.final_output["provider_state"] is None
@@ -326,6 +327,7 @@ def test_handle_response_plain_answer_has_no_state():
 
 
 # ----------------------------------------------- single-turn handle_stream
+
 
 def _chunk(type, **attrs):
     return SimpleNamespace(type=type, **attrs)
@@ -343,9 +345,7 @@ def test_handle_stream_tool_branch_single_turn():
             "message_start",
             message=SimpleNamespace(
                 id="msg_1",
-                usage=SimpleNamespace(
-                    input_tokens=10, cache_read_input_tokens=4
-                ),
+                usage=SimpleNamespace(input_tokens=10, cache_read_input_tokens=4),
                 container=SimpleNamespace(id="container_9"),
             ),
         ),
@@ -388,8 +388,14 @@ def test_handle_stream_tool_branch_single_turn():
     end_markers = [c for c in emitted if c.get("is_message_end")]
     assert end_markers, f"no message-end marker in {emitted!r}"
     for chunk in emitted:
-        for key in ("message_group_id", "event_type", "index", "data_format",
-                    "chunk_delta", "is_message_end"):
+        for key in (
+            "message_group_id",
+            "event_type",
+            "index",
+            "data_format",
+            "chunk_delta",
+            "is_message_end",
+        ):
             assert key in chunk, f"payload missing {key!r}: {chunk!r}"
 
 
@@ -497,3 +503,96 @@ def test_insert_file_routes_through_pooled_client():
         )
     assert captured["url"] == "https://example.com/f.pdf"
     assert result.id == "file_1"
+
+
+# --------------------------------------------------- invoke_model params (2026-10-19 E2E fix)
+
+
+def _messages_transport(captured):
+    """Mock Messages API transport: capture the request body, return a valid message."""
+
+    def _transport(request: "httpx.Request") -> "httpx.Response":
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-test-1",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 3, "output_tokens": 4},
+            },
+        )
+
+    return httpx.MockTransport(_transport)
+
+
+def test_invoke_model_omits_empty_system():
+    """No system message -> the API request must omit ``system`` entirely.
+
+    Regression (E2E 2026-10-19): the Messages API rejects ``system=None`` with
+    ``400 system: Input should be a valid array``.
+    """
+    captured = {}
+    pooled = httpx.Client(transport=_messages_transport(captured))
+    handler = _handler(
+        agent=_make_agent(instructions=None),
+        ctx=_ctx(http_client=pooled),
+    )
+    handler.invoke_model(input=[{"role": "user", "content": "hi"}], stream=False)
+    assert "system" not in captured["body"]
+
+
+def test_invoke_model_keeps_system_when_present():
+    captured = {}
+    pooled = httpx.Client(transport=_messages_transport(captured))
+    handler = _handler(ctx=_ctx(http_client=pooled))
+    handler.invoke_model(input=[{"role": "user", "content": "hi"}], stream=False)
+    assert captured["body"].get("system") == "You are a test agent."
+
+
+def test_invoke_model_thinking_pins_sampling_params():
+    """Extended thinking: conflicting temperature/top_p are dropped, not fatal.
+
+    Regression (E2E 2026-10-19): ``temperature may only be set to 1 when
+    thinking is enabled`` — a model stored default broke every call.
+    """
+    captured = {}
+    pooled = httpx.Client(transport=_messages_transport(captured))
+    handler = _handler(
+        agent=_make_agent(
+            configuration={
+                "model": "claude-test-1",
+                "max_tokens": 1024,
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "thinking": {"type": "enabled", "budget_tokens": 512},
+            }
+        ),
+        ctx=_ctx(http_client=pooled),
+    )
+    handler.invoke_model(input=[{"role": "user", "content": "hi"}], stream=False)
+    body = captured["body"]
+    assert body.get("thinking") == {"type": "enabled", "budget_tokens": 512}
+    assert "temperature" not in body
+    assert "top_p" not in body
+
+
+def test_invoke_model_passes_sampling_without_thinking():
+    captured = {}
+    pooled = httpx.Client(transport=_messages_transport(captured))
+    handler = _handler(
+        agent=_make_agent(
+            configuration={
+                "model": "claude-test-1",
+                "max_tokens": 100,
+                "temperature": 0.7,
+            }
+        ),
+        ctx=_ctx(http_client=pooled),
+    )
+    handler.invoke_model(input=[{"role": "user", "content": "hi"}], stream=False)
+    assert captured["body"].get("temperature") == 0.7

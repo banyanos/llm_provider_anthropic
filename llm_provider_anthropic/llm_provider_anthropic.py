@@ -81,8 +81,11 @@ class AnthropicProvider(LlmProviderHandler):
         if base.endswith("/v1"):
             base = base[: -len("/v1")]
         return fetch_upstream_models(
-            ctx, f"{base}/v1/models",
-            headers={"x-api-key": key, "anthropic-version": "2023-06-01"} if key else {},
+            ctx,
+            f"{base}/v1/models",
+            headers={"x-api-key": key, "anthropic-version": "2023-06-01"}
+            if key
+            else {},
         )
 
     def __init__(
@@ -142,11 +145,10 @@ class AnthropicProvider(LlmProviderHandler):
         else:
             self.client = anthropic.Anthropic(
                 api_key=api_key,
+                base_url=base_url or None,
                 http_client=http_client,
                 max_retries=0,
             )
-            if base_url:
-                self.client.base_url = base_url
 
         if "enabled_tools" in self.agent["configuration"]:
             # Add tools if available - matching example.py structure.
@@ -355,13 +357,20 @@ class AnthropicProvider(LlmProviderHandler):
                             }
                         )
 
-            # Filter out "thinking" and "skills" from model_setting to avoid duplication
-            # since we handle them explicitly in api_params
+            # Filter out "thinking" and "skills" from model_setting to avoid
+            # duplication since we handle them explicitly in api_params. Drop an
+            # empty ``system`` (the Messages API rejects system=None with a 400)
+            # and the sampling params the API pins while extended thinking is
+            # enabled (temperature may only be 1; top_p/top_k stay unset).
             filtered_model_setting = {
                 k: v
                 for k, v in self.model_setting.items()
-                if k not in ["thinking", "skills"]
+                if k not in ["thinking", "skills"] and not (k == "system" and not v)
             }
+            if api_params.get("thinking"):
+                for restricted in ("temperature", "top_p", "top_k"):
+                    if filtered_model_setting.get(restricted) not in (None, 1, 1.0):
+                        filtered_model_setting.pop(restricted, None)
 
             if betas:
                 api_params["betas"] = betas
@@ -785,9 +794,8 @@ class AnthropicProvider(LlmProviderHandler):
                         blocks: List[Dict[str, Any]] = []
                         for block in state.get("blocks") or []:
                             item = dict(block)
-                            if (
-                                item.get("type") == "tool_use"
-                                and isinstance(item.get("input"), str)
+                            if item.get("type") == "tool_use" and isinstance(
+                                item.get("input"), str
                             ):
                                 try:
                                     item["input"] = json.loads(item["input"] or "{}")
@@ -835,9 +843,7 @@ class AnthropicProvider(LlmProviderHandler):
                         "content": [
                             {
                                 "type": "tool_result",
-                                "tool_use_id": str(
-                                    message.get("tool_call_id") or ""
-                                ),
+                                "tool_use_id": str(message.get("tool_call_id") or ""),
                                 "content": str(message.get("content") or ""),
                             }
                         ],
@@ -1369,9 +1375,7 @@ class AnthropicProvider(LlmProviderHandler):
                             "type": "function",
                             "function": {
                                 "name": content.name,
-                                "arguments": Serializer.json_dumps(
-                                    content.input or {}
-                                ),
+                                "arguments": Serializer.json_dumps(content.input or {}),
                             },
                         }
                     )
@@ -1501,9 +1505,7 @@ class AnthropicProvider(LlmProviderHandler):
                 if getattr(content, "type", None) == "thinking"
                 and getattr(content, "signature", None)
             ]
-            state = (
-                self._provider_state(signed_thinking) if signed_thinking else None
-            )
+            state = self._provider_state(signed_thinking) if signed_thinking else None
             self.final_output.update(
                 {
                     "message_id": response.id,
@@ -1605,10 +1607,7 @@ class AnthropicProvider(LlmProviderHandler):
                     if _read:
                         stream_usage_cache_read = _read
                     _created = int(
-                        getattr(
-                            _start_usage, "cache_creation_input_tokens", 0
-                        )
-                        or 0
+                        getattr(_start_usage, "cache_creation_input_tokens", 0) or 0
                     )
                     if _created:
                         stream_usage_cache_creation = _created
@@ -1956,10 +1955,7 @@ class AnthropicProvider(LlmProviderHandler):
                     if _read:
                         stream_usage_cache_read = _read
                     _created = int(
-                        getattr(
-                            _delta_usage, "cache_creation_input_tokens", 0
-                        )
-                        or 0
+                        getattr(_delta_usage, "cache_creation_input_tokens", 0) or 0
                     )
                     if _created:
                         stream_usage_cache_creation = _created
@@ -2152,9 +2148,7 @@ class AnthropicProvider(LlmProviderHandler):
             for block in (accumulated_reasoning_blocks or [])
             if block.get("signature")
         ]
-        state = (
-            self._provider_state(signed_thinking) if signed_thinking else None
-        )
+        state = self._provider_state(signed_thinking) if signed_thinking else None
         self.final_output.update(
             {
                 "message_id": message_id,
@@ -2191,12 +2185,8 @@ class AnthropicProvider(LlmProviderHandler):
             # Pooled client injected by llm_engine (plan D7) — handlers build
             # no HTTP clients (Iron Rule #5).
             if self.ctx is None or getattr(self.ctx, "http_client", None) is None:
-                raise Exception(
-                    "insert_file requires ctx.http_client (pooled client)"
-                )
-            content_io = BytesIO(
-                self.ctx.http_client.get(kwargs["file_uri"]).content
-            )
+                raise Exception("insert_file requires ctx.http_client (pooled client)")
+            content_io = BytesIO(self.ctx.http_client.get(kwargs["file_uri"]).content)
             content_io.name = kwargs["filename"]
         else:
             raise Exception("No file content provided")
